@@ -1,0 +1,16 @@
+# Resultados de MATLAB
+resultados_inbreast_enhancement/
+resultados_enhancement/
+*.asv
+
+# Modelos y caché pesados
+*.mat
+checkpoints/
+
+# Logs
+*.log
+log_entrenamiento.txt
+
+# Sistema
+.DS_Store
+Thumbs.db
