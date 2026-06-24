@@ -18,8 +18,8 @@ clear; clc; close all;
 cfg = struct();
 
 % --- Rutas (ajustar según tu equipo) ---
-cfg.inbreastRoot   = 'C:\Users\Asus\Documents\Tesis\imagenes\INbreast Release 1.0';
-cfg.dicomFolder    = fullfile(cfg.inbreastRoot, 'AllDICOMs');
+cfg.inbreastRoot   = 'C:\Users\naria\Documents\bryan\modelo\data';
+cfg.dicomFolder    = fullfile(cfg.inbreastRoot, 'all-mias');
 cfg.csvMetadata    = fullfile(cfg.inbreastRoot, 'INbreast.csv');
 cfg.resultsFolder  = fullfile(pwd, 'resultados_inbreast_enhancement');
 
