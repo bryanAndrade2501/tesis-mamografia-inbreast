@@ -45,6 +45,24 @@ Los resultados se guardan en `resultados_inbreast_enhancement/`:
 - `previews/` — comparativas visuales
 - `red_enhancement_inbreast.mat` — red entrenada
 
+### Exportar salidas CNN como DICOM
+
+Tras entrenar el modelo, ejecutar:
+
+```matlab
+export_cnn_dicom
+```
+
+Genera **410 archivos DICOM por carpeta** en `../results_images/`:
+
+| Carpeta | Contenido | Sufijo |
+|---------|-----------|--------|
+| `entrada/` | X — preprocesamiento + denoise | `_INPUT.dcm` |
+| `referencia_clahe/` | Y — objetivo CLAHE | `_CLAHE.dcm` |
+| `cnn/` | Salida de la U-Net | `_CNN.dcm` |
+
+Usa el modelo de `RESULTADOS/EX2/` y `dataset_cache.mat`. Incluye `export_log.csv` con el mapeo de los tres tipos.
+
 ## Parámetros útiles
 
 | Parámetro | Descripción |
