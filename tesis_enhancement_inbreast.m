@@ -24,14 +24,15 @@ cfg.csvMetadata    = fullfile(cfg.inbreastRoot, 'INbreast.csv');
 cfg.resultsFolder  = fullfile(pwd, 'resultados_inbreast_enhancement');
 
 % --- Imagen y partición ---
-cfg.keepOriginalSize = true;        % true: sin imresize; se conserva tamaño tras ROI (con padding al máximo del dataset)
-cfg.imageSize        = [512 512];   % Solo aplica si keepOriginalSize = false
-cfg.trainRatio       = 0.70;
-cfg.valRatio         = 0.15;
-cfg.testRatio        = 0.15;
-cfg.randomSeed       = 42;
-cfg.splitByPatient   = true;        % Evita fuga: vistas del mismo paciente en un solo split
-cfg.forceTestPatientIds = {'20588680'};  % Pacientes reservados siempre para prueba
+cfg.imageSize            = [512 512];   % Tamaño para entrenamiento y evaluación estándar
+cfg.keepOriginalSize     = false;      % false en entrenamiento; true solo en eval. full-res
+cfg.trainRatio           = 0.70;
+cfg.valRatio             = 0.15;
+cfg.testRatio            = 0.15;
+cfg.randomSeed           = 42;
+cfg.splitByPatient       = true;
+cfg.forceTestPatientIds  = {'20588680'};       % Siempre en conjunto de prueba
+cfg.fullResTestPatientIds = {'20588680'};      % Evaluación adicional a tamaño nativo (post-entrenamiento)
 
 % --- 3.4.2 Preprocesamiento ---
 cfg.cropBreastROI      = true;
@@ -263,6 +264,26 @@ disp(results.summary);
 
 saveQualitativePreviews(XTest, YTest, YPred, testNames, cfg);
 makeMetricPlots(results.perImage, cfg.resultsFolder);
+
+%% Evaluación a resolución nativa (pacientes en fullResTestPatientIds)
+if ~isempty(cfg.fullResTestPatientIds)
+    fprintf('\n--- Evaluación full-res (tamaño original tras ROI) ---\n');
+    fullResFolder = fullfile(cfg.resultsFolder, 'fullres');
+    if ~exist(fullResFolder, 'dir')
+        mkdir(fullResFolder);
+    end
+    cfgFullRes = cfg;
+    cfgFullRes.resultsFolder = fullResFolder;
+    cfgFullRes.keepOriginalSize = true;
+    cfgFullRes.savePreviewCount = max(cfg.savePreviewCount, 10);
+
+    fullResResults = evaluatePatientsAtNativeResolution( ...
+        net, cfgFullRes, filePaths, fileNames, patientIds, cfg.fullResTestPatientIds);
+
+    writetable(fullResResults.perImage, fullfile(fullResFolder, 'metricas_test_fullres.csv'));
+    writetable(fullResResults.summary, fullfile(fullResFolder, 'resumen_metricas_fullres.csv'));
+    disp(fullResResults.summary);
+end
 
 fprintf('\n=== Pipeline finalizado | Resultados en: %s ===\n', cfg.resultsFolder);
 diary off;

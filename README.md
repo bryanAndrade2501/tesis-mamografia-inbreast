@@ -44,6 +44,15 @@ Los resultados se guardan en `resultados_inbreast_enhancement/`:
 - `resumen_metricas.csv` — promedios
 - `previews/` — comparativas visuales
 - `red_enhancement_inbreast.mat` — red entrenada
+- `fullres/` — evaluación a tamaño nativo para pacientes en `fullResTestPatientIds`
+
+### Inferencia full-res sin reentrenar
+
+```matlab
+infer_single_fullres
+```
+
+Evalúa pacientes como `20588680` a tamaño original (una imagen a la vez, bajo uso de RAM).
 
 ### Exportar salidas CNN como DICOM
 
@@ -67,7 +76,9 @@ Usa el modelo de `RESULTADOS/EX2/` y `dataset_cache.mat`. Incluye `export_log.cs
 
 | Parámetro | Descripción |
 |-----------|-------------|
-| `cfg.imageSize` | Tamaño de entrada (bajar a `[256 256]` si hay poca RAM) |
+| `cfg.imageSize` | Tamaño de entrenamiento (default `[512 512]`) |
+| `cfg.forceTestPatientIds` | Pacientes reservados para prueba (ej. `{'20588680'}`) |
+| `cfg.fullResTestPatientIds` | Evaluación extra a tamaño nativo tras ROI |
 | `cfg.maxEpochs` | Épocas de entrenamiento |
 | `cfg.denoiseMethod` | `'median'`, `'bilateral'` o `'none'` |
 | `cfg.splitByPatient` | `true` evita fuga entre train/test |
