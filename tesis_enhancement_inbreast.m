@@ -24,12 +24,14 @@ cfg.csvMetadata    = fullfile(cfg.inbreastRoot, 'INbreast.csv');
 cfg.resultsFolder  = fullfile(pwd, 'resultados_inbreast_enhancement');
 
 % --- Imagen y partición ---
-cfg.imageSize      = [512 512];
-cfg.trainRatio     = 0.70;
-cfg.valRatio       = 0.15;
-cfg.testRatio      = 0.15;
-cfg.randomSeed     = 42;
-cfg.splitByPatient = true;          % Evita fuga: vistas del mismo paciente en un solo split
+cfg.keepOriginalSize = true;        % true: sin imresize; se conserva tamaño tras ROI (con padding al máximo del dataset)
+cfg.imageSize        = [512 512];   % Solo aplica si keepOriginalSize = false
+cfg.trainRatio       = 0.70;
+cfg.valRatio         = 0.15;
+cfg.testRatio        = 0.15;
+cfg.randomSeed       = 42;
+cfg.splitByPatient   = true;        % Evita fuga: vistas del mismo paciente en un solo split
+cfg.forceTestPatientIds = {'20588680'};  % Pacientes reservados siempre para prueba
 
 % --- 3.4.2 Preprocesamiento ---
 cfg.cropBreastROI      = true;
@@ -111,10 +113,11 @@ fprintf('Pacientes únicos: %d\n', numel(unique(patientIds)));
 % ========================================================================
 fprintf('\n--- 3.4.2 Preprocesamiento | 3.4.3 Denoise | 3.4.4 Contraste ---\n');
 
-X = zeros([cfg.imageSize 1 numImages], 'single');   % Entrada CNN (preproc + denoise)
-Y = zeros([cfg.imageSize 1 numImages], 'single');   % Target (preproc + denoise + CLAHE)
-Xraw = zeros([cfg.imageSize 1 numImages], 'single'); % Solo preprocesado (sin denoise)
-YclaheOnly = zeros([cfg.imageSize 1 numImages], 'single'); % Baseline CLAHE
+Xcell = cell(numImages, 1);
+Ycell = cell(numImages, 1);
+XrawCell = cell(numImages, 1);
+YclaheCell = cell(numImages, 1);
+nativeSizes = zeros(numImages, 2);
 
 preprocLog = cell(numImages, 1);
 
@@ -125,24 +128,39 @@ for i = 1:numImages
 
     [Iraw, meta] = readDicomMammography(filePaths{i});
     Iprep = preprocessMammography(Iraw, cfg, meta);
-    Xraw(:,:,1,i) = im2single(Iprep);
+    XrawCell{i} = im2single(Iprep);
+    nativeSizes(i, :) = size(Iprep);
 
     Iden = applyDenoising(Iprep, cfg);
-    X(:,:,1,i) = im2single(Iden);
+    Xcell{i} = im2single(Iden);
 
     if cfg.useCLAHEasTarget
         T = applyCLAHE(Iden, cfg);
     else
         error('Para esta tesis se requiere pseudo-target CLAHE (useCLAHEasTarget=true).');
     end
-    Y(:,:,1,i) = im2single(T);
-    YclaheOnly(:,:,1,i) = Y(:,:,1,i);
+    Ycell{i} = im2single(T);
+    YclaheCell{i} = Ycell{i};
 
     preprocLog{i} = meta;
 end
 
+if cfg.keepOriginalSize
+    cfg.imageSize = [max(nativeSizes(:, 1)), max(nativeSizes(:, 2))];
+    fprintf('Tamaño original conservado (tras ROI). Padding común: %d x %d\n', ...
+        cfg.imageSize(1), cfg.imageSize(2));
+    fprintf('  Rango nativo: %d-%d filas, %d-%d columnas\n', ...
+        min(nativeSizes(:,1)), max(nativeSizes(:,1)), ...
+        min(nativeSizes(:,2)), max(nativeSizes(:,2)));
+else
+    fprintf('Tamaño fijo de entrada: %d x %d\n', cfg.imageSize(1), cfg.imageSize(2));
+end
+
+[X, Y, Xraw, YclaheOnly] = packImageCellsToTensor( ...
+    Xcell, Ycell, XrawCell, YclaheCell, cfg.imageSize);
+
 save(fullfile(cfg.resultsFolder, 'dataset_cache.mat'), ...
-    'X', 'Y', 'Xraw', 'YclaheOnly', 'fileNames', 'patientIds', 'cfg', '-v7.3');
+    'X', 'Y', 'Xraw', 'YclaheOnly', 'fileNames', 'patientIds', 'nativeSizes', 'cfg', '-v7.3');
 fprintf('Dataset construido y cacheado.\n');
 
 %% ========================================================================
@@ -150,7 +168,7 @@ fprintf('Dataset construido y cacheado.\n');
 % ========================================================================
 if cfg.splitByPatient
     [idxTrain, idxVal, idxTest] = splitIndicesByPatient( ...
-        patientIds, cfg.trainRatio, cfg.valRatio, cfg.randomSeed);
+        patientIds, cfg.trainRatio, cfg.valRatio, cfg.randomSeed, cfg.forceTestPatientIds);
 else
     idx = randperm(numImages);
     nTrain = floor(cfg.trainRatio * numImages);
@@ -320,7 +338,9 @@ function Iout = preprocessMammography(I, cfg, ~)
         I = cropBreastBoundingBox(I, cfg.roiMarginPx);
     end
 
-    I = imresize(I, cfg.imageSize, 'bilinear');
+    if ~cfg.keepOriginalSize
+        I = imresize(I, cfg.imageSize, 'bilinear');
+    end
 
     lo = prctile(I(:), cfg.normLowPercentile);
     hi = prctile(I(:), cfg.normHighPercentile);
@@ -376,30 +396,67 @@ function Iout = applyCLAHE(I, cfg)
     Iout = min(max(im2single(Iout), 0), 1);
 end
 
-function [idxTrain, idxVal, idxTest] = splitIndicesByPatient(patientIds, trainRatio, valRatio, seed)
-    patients = unique(patientIds, 'stable');
-    nPatients = numel(patients);
+function [idxTrain, idxVal, idxTest] = splitIndicesByPatient( ...
+        patientIds, trainRatio, valRatio, seed, forceTestPatientIds)
+    if nargin < 5 || isempty(forceTestPatientIds)
+        forceTestPatientIds = {};
+    end
+    forceTestPatientIds = cellstr(string(forceTestPatientIds));
+
+    idxForceTest = find(ismember(patientIds, forceTestPatientIds));
+    if ~isempty(forceTestPatientIds)
+        fprintf('Pacientes forzados a prueba: %s (%d imagenes)\n', ...
+            strjoin(forceTestPatientIds, ', '), numel(idxForceTest));
+    end
+
+    poolMask = ~ismember(patientIds, forceTestPatientIds);
+    poolPatients = unique(patientIds(poolMask), 'stable');
+    nPool = numel(poolPatients);
 
     rng(seed);
-    perm = randperm(nPatients);
+    perm = randperm(nPool);
 
-    nTrainP = max(1, floor(trainRatio * nPatients));
-    nValP   = max(1, floor(valRatio * nPatients));
-    if nTrainP + nValP >= nPatients
-        nValP = max(1, nPatients - nTrainP - 1);
+    nTrainP = max(1, floor(trainRatio * nPool));
+    nValP   = max(1, floor(valRatio * nPool));
+    if nTrainP + nValP >= nPool
+        nValP = max(1, nPool - nTrainP - 1);
     end
-    nTestP = nPatients - nTrainP - nValP;
+    nTestP = nPool - nTrainP - nValP;
 
-    trainPatients = patients(perm(1:nTrainP));
-    valPatients   = patients(perm(nTrainP+1 : nTrainP+nValP));
-    testPatients  = patients(perm(nTrainP+nValP+1 : end));
+    trainPatients = poolPatients(perm(1:nTrainP));
+    valPatients   = poolPatients(perm(nTrainP+1 : nTrainP+nValP));
+    testPatients  = poolPatients(perm(nTrainP+nValP+1 : end));
 
     idxTrain = find(ismember(patientIds, trainPatients));
     idxVal   = find(ismember(patientIds, valPatients));
-    idxTest  = find(ismember(patientIds, testPatients));
+    idxTest  = unique([idxForceTest; find(ismember(patientIds, testPatients))]);
 
     fprintf('Split por paciente | Train: %d pac (%d img) | Val: %d pac (%d img) | Test: %d pac (%d img)\n', ...
-        nTrainP, numel(idxTrain), nValP, numel(idxVal), nTestP, numel(idxTest));
+        numel(trainPatients), numel(idxTrain), numel(valPatients), numel(idxVal), ...
+        numel(unique(patientIds(idxTest))), numel(idxTest));
+end
+
+function [X, Y, Xraw, YclaheOnly] = packImageCellsToTensor( ...
+        Xcell, Ycell, XrawCell, YclaheCell, imageSize)
+    n = numel(Xcell);
+    X = zeros([imageSize 1 n], 'single');
+    Y = zeros([imageSize 1 n], 'single');
+    Xraw = zeros([imageSize 1 n], 'single');
+    YclaheOnly = zeros([imageSize 1 n], 'single');
+
+    for i = 1:n
+        X(:,:,1,i) = padImageToSize(Xcell{i}, imageSize);
+        Y(:,:,1,i) = padImageToSize(Ycell{i}, imageSize);
+        Xraw(:,:,1,i) = padImageToSize(XrawCell{i}, imageSize);
+        YclaheOnly(:,:,1,i) = padImageToSize(YclaheCell{i}, imageSize);
+    end
+end
+
+function Ip = padImageToSize(I, targetSize)
+    Ip = zeros(targetSize(1), targetSize(2), 'like', I);
+    h = min(size(I, 1), targetSize(1));
+    w = min(size(I, 2), targetSize(2));
+    Ip(1:h, 1:w) = I(1:h, 1:w);
 end
 
 function layers = buildEnhancementUNet(imageSize)
